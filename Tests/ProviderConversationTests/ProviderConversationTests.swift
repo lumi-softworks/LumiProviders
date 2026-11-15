@@ -1,0 +1,378 @@
+import Combine
+import Foundation
+import KitLLM
+import XCTest
+@testable import ProviderConversation
+
+/// `DefaultConversationManager` 内存实现的单元测试。
+@MainActor
+final class ProviderConversationTests: XCTestCase {
+
+    func testCreateConversationSelectsAndUpdatesTitle() throws {
+        let manager = DefaultConversationManager()
+
+        let id = try manager.createConversation(
+            title: "  你好 Lumi  ",
+            projectPath: "/tmp/proj",
+            providerID: "openai",
+            modelName: "gpt-4o"
+        )
+
+        XCTAssertEqual(manager.conversations.count, 1)
+        XCTAssertEqual(manager.selectedConversationID, id)
+        XCTAssertEqual(manager.currentTitle, "你好 Lumi")
+        XCTAssertEqual(manager.providerID(for: id), "openai")
+        XCTAssertEqual(manager.modelName(for: id), "gpt-4o")
+        XCTAssertEqual(manager.conversations.first?.projectPath, "/tmp/proj")
+    }
+
+    func testEmptyTitleFallsBackToUntitled() throws {
+        let manager = DefaultConversationManager()
+        let id = try manager.createConversation(title: "   ", projectPath: nil, providerID: nil, modelName: nil)
+
+        XCTAssertNil(manager.conversations.first?.title)
+        XCTAssertEqual(manager.currentTitle, "Untitled")
+        XCTAssertEqual(manager.conversations.first?.displayTitle, "Untitled")
+        XCTAssertFalse(manager.conversations.first?.hasCustomTitle ?? true)
+    }
+
+    func testSelectDeselectDelete() throws {
+        let manager = DefaultConversationManager()
+        let first = try manager.createConversation(title: "A", projectPath: nil, providerID: nil, modelName: nil)
+        let second = try manager.createConversation(title: "B", projectPath: nil, providerID: nil, modelName: nil)
+
+        XCTAssertEqual(manager.selectedConversationID, second)
+
+        manager.selectConversation(id: first)
+        XCTAssertEqual(manager.selectedConversationID, first)
+        XCTAssertEqual(manager.currentTitle, "A")
+
+        manager.deselectConversation()
+        XCTAssertNil(manager.selectedConversationID)
+        XCTAssertEqual(manager.currentTitle, "No conversation")
+
+        manager.deleteConversation(id: second)
+        XCTAssertEqual(manager.conversations.count, 1)
+        XCTAssertEqual(manager.conversations.first?.id, first)
+    }
+
+    /// 回归 #880：会话不在 `conversations` 缓存数组里时，模型选择不能被静默丢弃。
+    ///
+    /// 子代理对话不进入顶层缓存，这里借它构造「窗口外旧会话」的场景。
+    func testModelSelectionOutsideCacheIsNotDropped() throws {
+        let manager = DefaultConversationManager()
+        let staleID = try manager.createConversation(
+            title: "stale",
+            projectPath: nil,
+            providerID: nil,
+            modelName: nil,
+            parentConversationID: UUID()
+        )
+        XCTAssertFalse(manager.conversations.contains { $0.id == staleID })
+        manager.selectConversation(id: staleID)
+
+        let modelID = try XCTUnwrap(LLMModelID(providerID: "ui-test", modelID: "ui-test-long"))
+        manager.selectModel(id: modelID.rawValue, for: staleID)
+
+        XCTAssertEqual(manager.modelID(for: staleID), modelID.rawValue)
+        XCTAssertEqual(manager.providerID(for: staleID), "ui-test")
+        XCTAssertEqual(manager.modelName(for: staleID), "ui-test-long")
+    }
+
+    func testSortedConversationsByLastMessage() throws {
+        let manager = DefaultConversationManager()
+        let older = try manager.createConversation(title: "older", projectPath: nil, providerID: nil, modelName: nil)
+        let newer = try manager.createConversation(title: "newer", projectPath: nil, providerID: nil, modelName: nil)
+
+        // 让 older 收到新消息，应置顶。
+        let messageDate = Date().addingTimeInterval(60)
+        manager.markConversationActive(id: older, messageDate: messageDate)
+
+        XCTAssertEqual(manager.sortedConversations.map(\.id), [older, newer])
+        XCTAssertEqual(manager.conversations.first { $0.id == older }?.lastMessageAt, messageDate)
+    }
+
+    func testUpdateTitle() throws {
+        let manager = DefaultConversationManager()
+        let id = try manager.createConversation(title: "Old", projectPath: nil, providerID: nil, modelName: nil)
+
+        XCTAssertTrue(manager.updateConversationTitle("New Title", for: id))
+        XCTAssertEqual(manager.currentTitle, "New Title")
+
+        XCTAssertFalse(manager.updateConversationTitle("x", for: UUID()))
+    }
+
+    func testConversationModelSelectionUsesSingleStableID() throws {
+        let summary = ConversationSummary(
+            title: "Model selection",
+            providerID: "gateway/alpha",
+            modelName: "model:latest/v2"
+        )
+
+        XCTAssertNotNil(summary.modelID)
+        XCTAssertEqual(summary.providerID, "gateway/alpha")
+        XCTAssertEqual(summary.modelName, "model:latest/v2")
+
+        let encoded = try JSONEncoder().encode(summary)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        XCTAssertNotNil(object["modelID"])
+        XCTAssertNil(object["providerID"])
+        XCTAssertNil(object["modelName"])
+    }
+
+    func testConversationSummaryDecodesLegacyProviderAndModelPair() throws {
+        let json = #"{"id":"00000000-0000-0000-0000-000000000001","title":"Legacy","preview":"","createdAt":0,"updatedAt":0,"lastMessageAt":0,"providerID":"openai","modelName":"gpt-5.5"}"#.data(using: .utf8)!
+        let summary = try JSONDecoder().decode(ConversationSummary.self, from: json)
+
+        XCTAssertEqual(summary.providerID, "openai")
+        XCTAssertEqual(summary.modelName, "gpt-5.5")
+        XCTAssertNotNil(summary.modelID)
+    }
+
+    func testPerConversationPreferences() throws {
+        let manager = DefaultConversationManager()
+        let id = try manager.createConversation(title: nil, projectPath: nil, providerID: nil, modelName: nil)
+
+        // 默认继承全局设置
+        XCTAssertEqual(manager.verbosity(for: id), .defaultVerbosity)
+        XCTAssertEqual(manager.reasoningEffort(for: id), .defaultEffort)
+        XCTAssertEqual(manager.automationLevel(for: id), .build)
+        XCTAssertEqual(manager.language(for: id), .chinese)
+
+        // 按对话覆盖
+        manager.setVerbosity(.detailed, for: id)
+        manager.setReasoningEffort(.max, for: id)
+        manager.setAutomationLevel(.autonomous, for: id)
+        manager.setLanguage(.english, for: id)
+
+        XCTAssertEqual(manager.verbosity(for: id), .detailed)
+        XCTAssertEqual(manager.reasoningEffortOptional(for: id), .max)
+        XCTAssertEqual(manager.automationLevel(for: id), .autonomous)
+        XCTAssertEqual(manager.language(for: id), .english)
+
+        // 清除推理强度 → 回退全局默认（非 nil）
+        manager.clearReasoningEffort(for: id)
+        XCTAssertEqual(manager.reasoningEffortOptional(for: id), .defaultEffort)
+        XCTAssertEqual(manager.reasoningEffort(for: id), .defaultEffort)
+    }
+
+    func testSettingSameVerbosityDoesNotNotify() throws {
+        let manager = DefaultConversationManager()
+        let id = try manager.createConversation(title: nil, projectPath: nil, providerID: nil, modelName: nil)
+        var verbosityEvents = 0
+        let handle = manager.addConversationObserver { event in
+            if case .verbosityChanged = event {
+                verbosityEvents += 1
+            }
+        }
+        defer { handle.cancel() }
+
+        manager.setVerbosity(.defaultVerbosity, for: id)
+        XCTAssertEqual(verbosityEvents, 0)
+
+        manager.setVerbosity(.detailed, for: id)
+        manager.setVerbosity(.detailed, for: id)
+        XCTAssertEqual(verbosityEvents, 1)
+    }
+
+    func testGlobalPreferencesApplyToNewConversations() throws {
+        let manager = DefaultConversationManager()
+        manager.setGlobalVerbosity(.brief)
+        manager.setGlobalReasoningEffort(.low)
+        manager.setGlobalAutomationLevel(.chat)
+        manager.setGlobalLanguage(.english)
+
+        let id = try manager.createConversation(title: nil, projectPath: nil, providerID: nil, modelName: nil)
+
+        XCTAssertEqual(manager.verbosity(for: id), .brief)
+        XCTAssertEqual(manager.reasoningEffort(for: id), .low)
+        XCTAssertEqual(manager.automationLevel(for: id), .chat)
+        XCTAssertEqual(manager.language(for: id), .english)
+    }
+
+    func testConversationCountAndProjectCount() async throws {
+        let manager = DefaultConversationManager()
+        _ = try manager.createConversation(title: "A", projectPath: "/p1", providerID: nil, modelName: nil)
+        _ = try manager.createConversation(title: "B", projectPath: "/p1", providerID: nil, modelName: nil)
+        _ = try manager.createConversation(title: "C", projectPath: "/p2", providerID: nil, modelName: nil)
+
+        let all = await manager.conversationCount(projectPath: nil)
+        let p1 = await manager.conversationCount(projectPath: "/p1")
+        let projects = await manager.conversationProjectCount()
+
+        XCTAssertEqual(all, 3)
+        XCTAssertEqual(p1, 2)
+        XCTAssertEqual(projects, 2)
+    }
+
+    func testFetchConversationPageFiltersByProject() async throws {
+        let manager = DefaultConversationManager()
+        _ = try manager.createConversation(title: "A", projectPath: "/p1", providerID: nil, modelName: nil)
+        _ = try manager.createConversation(title: "B", projectPath: "/p2", providerID: nil, modelName: nil)
+
+        let p1 = await manager.fetchConversationPage(limit: 10, beforeUpdatedAt: nil, beforeID: nil, includingChildConversations: true, projectPath: "/p1")
+        XCTAssertEqual(p1.map(\.title), ["A"])
+    }
+
+    // MARK: - Selected Conversation Observation
+
+    func testSelectedConversationObserverReceivesChanges() throws {
+        let manager = DefaultConversationManager()
+        var received: [UUID?] = []
+        let token = manager.addSelectedConversationObserver { received.append($0) }
+
+        let first = try manager.createConversation(title: "A", projectPath: nil, providerID: nil, modelName: nil)
+        let second = try manager.createConversation(title: "B", projectPath: nil, providerID: nil, modelName: nil)
+
+        XCTAssertEqual(received, [first, second], "注册后创建对话自动选中，应逐次收到新 ID")
+
+        manager.selectConversation(id: first)
+        XCTAssertEqual(received.last, first)
+
+        manager.deselectConversation()
+        XCTAssertEqual(received.last ?? nil, nil, "取消选择应收到 nil")
+
+        manager.selectConversation(id: first)
+        XCTAssertEqual(received.last, first)
+
+        // 重复选择同一值不应重复通知
+        manager.selectConversation(id: first)
+        XCTAssertEqual(received.count, 5)
+
+        // 删除当前选中对话会自动切换到剩余对话
+        manager.deleteConversation(id: first)
+        XCTAssertEqual(received.last, second)
+        XCTAssertEqual(received.count, 6)
+
+        token.cancel()
+    }
+
+    func testSelectedConversationObserverStopsAfterCancel() throws {
+        let manager = DefaultConversationManager()
+        var received: [UUID?] = []
+        let token = manager.addSelectedConversationObserver { received.append($0) }
+
+        let first = try manager.createConversation(title: "A", projectPath: nil, providerID: nil, modelName: nil)
+        XCTAssertEqual(received, [first])
+
+        token.cancel()
+        manager.deselectConversation()
+        XCTAssertEqual(received, [first], "注销后不应再收到通知")
+
+        // 重复 cancel 无副作用
+        token.cancel()
+        manager.selectConversation(id: first)
+        XCTAssertEqual(received, [first])
+    }
+
+    func testSelectedConversationObserverAutoUnregistersOnDeinit() throws {
+        let manager = DefaultConversationManager()
+        var received: [UUID?] = []
+
+        do {
+            let token = manager.addSelectedConversationObserver { received.append($0) }
+            _ = try manager.createConversation(title: "A", projectPath: nil, providerID: nil, modelName: nil)
+            XCTAssertEqual(received.count, 1)
+            withExtendedLifetime(token) {}
+        }
+
+        // 令牌释放后不再通知
+        manager.deselectConversation()
+        XCTAssertEqual(received.count, 1, "令牌释放（deinit）后应自动注销")
+    }
+
+    func testConversationObserverReceivesSemanticChanges() throws {
+        let manager = DefaultConversationManager()
+        var events: [ConversationEvent] = []
+        let token = manager.addConversationObserver { events.append($0) }
+
+        let id = try manager.createConversation(title: "A", projectPath: nil, providerID: nil, modelName: nil)
+        XCTAssertTrue(events.contains(.created(id)))
+
+        _ = manager.updateConversationTitle("B", for: id)
+        manager.setGlobalAutomationLevel(.autonomous)
+        manager.setAutomationLevel(.chat, for: id)
+        manager.markConversationActive(id: id, messageDate: Date())
+        manager.deleteConversation(id: id)
+
+        XCTAssertTrue(events.contains(.updated(id)))
+        XCTAssertTrue(events.contains(.automationChanged(nil)))
+        XCTAssertTrue(events.contains(.automationChanged(id)))
+        XCTAssertTrue(events.contains(.markedActive(id)))
+        XCTAssertTrue(events.contains(.deleted(id)))
+
+        token.cancel()
+    }
+
+    func testMultipleSelectedConversationObservers() throws {
+        let manager = DefaultConversationManager()
+        var firstCount = 0
+        var secondCount = 0
+        let first = manager.addSelectedConversationObserver { _ in firstCount += 1 }
+        let second = manager.addSelectedConversationObserver { _ in secondCount += 1 }
+
+        _ = try manager.createConversation(title: "A", projectPath: nil, providerID: nil, modelName: nil)
+        XCTAssertEqual(firstCount, 1)
+        XCTAssertEqual(secondCount, 1)
+
+        first.cancel()
+        manager.deselectConversation()
+        XCTAssertEqual(firstCount, 1, "已注销的观察者不再收到通知")
+        XCTAssertEqual(secondCount, 2)
+    }
+
+    // MARK: - ProjectBinding
+
+    func testProjectBindingNoneResolvesToNilEvenWithCurrentProject() {
+        XCTAssertNil(ProjectBinding.none.resolvedProjectPath(inheriting: "/tmp/current"))
+    }
+
+    func testProjectBindingInheritUsesCurrentProject() {
+        XCTAssertEqual(
+            ProjectBinding.inheritCurrent.resolvedProjectPath(inheriting: "/tmp/current"),
+            "/tmp/current"
+        )
+        XCTAssertNil(ProjectBinding.inheritCurrent.resolvedProjectPath(inheriting: nil))
+    }
+
+    func testProjectBindingProjectUsesExplicitPath() {
+        XCTAssertEqual(
+            ProjectBinding.project("/tmp/proj").resolvedProjectPath(inheriting: "/tmp/current"),
+            "/tmp/proj"
+        )
+    }
+
+    func testProjectBindingEmptyPathIsNeverPersisted() throws {
+        XCTAssertNil(ProjectBinding.project("").resolvedProjectPath(inheriting: "/tmp/current"))
+
+        let manager = DefaultConversationManager()
+        _ = try manager.createConversation(
+            title: nil,
+            binding: .project(""),
+            providerID: nil,
+            modelName: nil
+        )
+        XCTAssertNil(manager.conversations.first?.projectPath)
+        XCTAssertNotEqual(manager.conversations.first?.projectPath, "")
+    }
+
+    func testDefaultManagerBindingNoneAndInheritBothStayUnbound() throws {
+        let manager = DefaultConversationManager()
+
+        let noneID = try manager.createConversation(
+            title: "无项目",
+            binding: .none,
+            providerID: nil,
+            modelName: nil
+        )
+        XCTAssertNil(manager.conversations.first { $0.id == noneID }?.projectPath)
+
+        let inheritID = try manager.createConversation(
+            title: "默认",
+            binding: .inheritCurrent,
+            providerID: nil,
+            modelName: nil
+        )
+        XCTAssertNil(manager.conversations.first { $0.id == inheritID }?.projectPath)
+    }
+}

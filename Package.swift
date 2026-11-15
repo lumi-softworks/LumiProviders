@@ -38,12 +38,16 @@ let package = Package(
         .library(name: "ProviderDiagnostics", targets: ["ProviderDiagnostics"]),
         .library(name: "ProviderPromptSuggestion", targets: ["ProviderPromptSuggestion"]),
         .library(name: "ProviderStore", targets: ["ProviderStore"]),
+        .library(name: "ProviderConversation", targets: ["ProviderConversation"]),
+        .library(name: "ProviderChatSection", targets: ["ProviderChatSection"]),
     ],
     dependencies: [
         .package(url: "https://github.com/lumi-softworks/LumiKernel.git", from: "1.1.0"),
         .package(url: "https://github.com/lumi-softworks/LumiLogging.git", from: "1.0.1"),
         .package(url: "https://github.com/lumi-softworks/LumiLocalization.git", from: "1.0.1"),
         .package(url: "https://github.com/lumi-softworks/LumiUI.git", from: "1.11.1"),
+        .package(url: "https://github.com/lumi-softworks/KitLLM.git", from: "1.0.0"),
+        .package(url: "https://github.com/lumi-softworks/KitTestSupport.git", from: "1.0.0"),
     ],
     targets: [
         .target(
@@ -378,6 +382,39 @@ let package = Package(
             name: "ProviderStoreTests",
             dependencies: ["ProviderStore"],
             path: "Tests/ProviderStoreTests"
+        ),
+        .target(
+            name: "ProviderConversation",
+            dependencies: [
+                .product(name: "LumiLoggingKit", package: "LumiLogging"),
+                .product(name: "KitLLM", package: "KitLLM"),
+                .product(name: "KitTestIsolation", package: "KitTestSupport"),
+            ],
+            path: "Sources/ProviderConversation"
+        ),
+        .testTarget(
+            name: "ProviderConversationTests",
+            dependencies: [
+                "ProviderConversation",
+                .product(name: "KitTestSupport", package: "KitTestSupport"),
+            ],
+            path: "Tests/ProviderConversationTests"
+        ),
+        .target(
+            name: "ProviderChatSection",
+            dependencies: [
+                .product(name: "LumiUI", package: "LumiUI"),
+                "ProviderConversation",
+            ],
+            path: "Sources/ProviderChatSection"
+        ),
+        .testTarget(
+            name: "ProviderChatSectionTests",
+            dependencies: [
+                "ProviderChatSection",
+                "ProviderConversation",
+            ],
+            path: "Tests/ProviderChatSectionTests"
         ),
     ]
 )
