@@ -46,8 +46,8 @@ let package = Package(
         .package(url: "https://github.com/lumi-softworks/LumiLogging.git", from: "1.0.1"),
         .package(url: "https://github.com/lumi-softworks/LumiLocalization.git", from: "1.0.1"),
         .package(url: "https://github.com/lumi-softworks/LumiUI.git", from: "1.11.1"),
-        .package(url: "https://github.com/lumi-softworks/KitLLM.git", from: "1.0.0"),
-        .package(url: "https://github.com/lumi-softworks/KitTestSupport.git", from: "1.0.0"),
+        .package(url: "https://github.com/lumi-softworks/LumiKitLLM.git", from: "1.0.0"),
+        .package(url: "https://github.com/lumi-softworks/LumiKitTestSupport.git", from: "1.0.0"),
     ],
     targets: [
         .target(
@@ -387,8 +387,8 @@ let package = Package(
             name: "ProviderConversation",
             dependencies: [
                 .product(name: "LumiLoggingKit", package: "LumiLogging"),
-                .product(name: "KitLLM", package: "KitLLM"),
-                .product(name: "KitTestIsolation", package: "KitTestSupport"),
+                .product(name: "KitLLM", package: "LumiKitLLM"),
+                .product(name: "KitTestIsolation", package: "LumiKitTestSupport"),
             ],
             path: "Sources/ProviderConversation"
         ),
@@ -396,7 +396,7 @@ let package = Package(
             name: "ProviderConversationTests",
             dependencies: [
                 "ProviderConversation",
-                .product(name: "KitTestSupport", package: "KitTestSupport"),
+                .product(name: "KitTestSupport", package: "LumiKitTestSupport"),
             ],
             path: "Tests/ProviderConversationTests"
         ),
