@@ -201,7 +201,12 @@ public struct UninstallLocations: Sendable, Equatable {
     public static func live(
         applicationBundleURL: URL? = Bundle.main.bundleURL
     ) -> Self {
+        #if os(macOS)
         let home = FileManager.default.homeDirectoryForCurrentUser
+        #else
+        // iOS 没有跨 App 卸载概念，这里仅保证编译；路径在 iOS 上不会被用于卸载。
+        let home = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+        #endif
         let library = home.appendingPathComponent("Library", isDirectory: true)
         return Self(
             applicationSupportDirectory: library.appendingPathComponent("Application Support", isDirectory: true),
