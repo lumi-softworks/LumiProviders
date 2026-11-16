@@ -29,6 +29,7 @@ let package = Package(
         .library(name: "ProviderPluginManaging", targets: ["ProviderPluginManaging"]),
         .library(name: "ProviderRootView", targets: ["ProviderRootView"]),
         .library(name: "ProviderStorage", targets: ["ProviderStorage"]),
+        .library(name: "ProviderDiskCache", targets: ["ProviderDiskCache"]),
         .library(name: "ProviderTheme", targets: ["ProviderTheme"]),
         .library(name: "ProviderToast", targets: ["ProviderToast"]),
         .library(name: "ProviderToolbar", targets: ["ProviderToolbar"]),
@@ -214,6 +215,18 @@ let package = Package(
                 .product(name: "KernelCore", package: "LumiKernel"),
             ],
             path: "Tests/ProviderStorageTests"
+        ),
+        .target(
+            name: "ProviderDiskCache",
+            dependencies: [
+                .product(name: "LumiLoggingKit", package: "LumiLogging"),
+            ],
+            path: "Sources/ProviderDiskCache"
+        ),
+        .testTarget(
+            name: "ProviderDiskCacheTests",
+            dependencies: ["ProviderDiskCache"],
+            path: "Tests/ProviderDiskCacheTests"
         ),
         .target(
             name: "ProviderToast",
