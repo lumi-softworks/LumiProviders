@@ -116,7 +116,7 @@ private struct ActivityBarView: View {
                         // 与旧版 ActivityBar 一致：发出通知，由主窗口根视图监听并打开设置窗口。
                         NotificationCenter.default.post(name: .lumiOpenSettings, object: nil)
                     } label: {
-                        Label("打开设置", systemImage: "gearshape")
+                        Label(pluginLocalization.string("Open Settings"), systemImage: "gearshape")
                     }
                 }
             }

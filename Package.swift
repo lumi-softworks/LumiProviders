@@ -3,6 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "LumiProviders",
+    defaultLocalization: "en",
     platforms: [
         .macOS(.v14),
         .iOS(.v17)
@@ -292,8 +293,10 @@ let package = Package(
             name: "ProviderActivityBar",
             dependencies: [
                 .product(name: "LumiUI", package: "LumiUI"),
+                .product(name: "LumiLocalizationKit", package: "LumiLocalization"),
             ],
-            path: "Sources/ProviderActivityBar"
+            path: "Sources/ProviderActivityBar",
+            resources: [.process("../../Resources/Localizable.xcstrings")]
         ),
         .testTarget(
             name: "ProviderActivityBarTests",
