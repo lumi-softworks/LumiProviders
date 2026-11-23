@@ -34,6 +34,8 @@ public struct MenuBarHostConfiguration {
 public final class MenuBarHost: NSObject {
     private var configuration = MenuBarHostConfiguration()
     private var popoverViewFactory: (() -> AnyView)?
+    private var maximumPopoverHeight: CGFloat?
+    private var desiredContentHeight: CGFloat?
     private(set) var statusItem: NSStatusItem?
     private(set) var statusHostingView: NSHostingView<AnyView>?
     private(set) var popover: NSPopover?
@@ -56,6 +58,14 @@ public final class MenuBarHost: NSObject {
 
         self.configuration = configuration
         self.popoverViewFactory = popoverView
+        switch configuration.popoverSizing {
+        case .intrinsic:
+            maximumPopoverHeight = nil
+        case .fixedSize(let size):
+            maximumPopoverHeight = size.height
+        case .fixedWidth(_, let maximumHeight):
+            maximumPopoverHeight = maximumHeight
+        }
 
         button.title = ""
         button.image = nil
@@ -97,10 +107,23 @@ public final class MenuBarHost: NSObject {
         popover?.performClose(nil)
     }
 
+    /// 由内容视图回报自然高度，宿主据此调整弹窗尺寸。
+    ///
+    /// 仅对 `.fixedWidth` 生效；高度会被限制在配置的最大高度内。
+    public func setContentHeight(_ height: CGFloat) {
+        guard let maximumPopoverHeight, popover != nil else { return }
+        guard case .fixedWidth(let width, _) = configuration.popoverSizing else { return }
+        let clamped = min(max(height, 1), maximumPopoverHeight)
+        if let desiredContentHeight, abs(desiredContentHeight - clamped) < 0.5 { return }
+        desiredContentHeight = clamped
+        applyContentSize(NSSize(width: width, height: clamped))
+    }
+
     public func cleanup() {
         closePopover()
         popover = nil
         popoverViewFactory = nil
+        desiredContentHeight = nil
         statusHostingView = nil
         if let statusItem {
             NSStatusBar.system.removeStatusItem(statusItem)
@@ -116,23 +139,57 @@ public final class MenuBarHost: NSObject {
         let popover = NSPopover()
         popover.behavior = .transient
         popover.animates = true
-        popover.contentViewController = NSHostingController(rootView: popoverViewFactory())
+        let container = PopoverContentView(rootView: popoverViewFactory())
+        let controller = NSViewController()
+        controller.view = container
+        popover.contentViewController = controller
         self.popover = popover
         updatePopoverSize()
         return popover
     }
 
     func updatePopoverSize() {
-        guard let popover else { return }
+        guard popover != nil else { return }
         switch configuration.popoverSizing {
         case .intrinsic:
             break
         case .fixedSize(let size):
-            popover.contentSize = size
+            applyContentSize(size)
         case .fixedWidth(let width, let maximumHeight):
-            let fittingHeight = popover.contentViewController?.view.fittingSize.height ?? 0
-            popover.contentSize = NSSize(width: width, height: min(fittingHeight, maximumHeight))
+            let height = min(desiredContentHeight ?? maximumHeight, maximumHeight)
+            applyContentSize(NSSize(width: width, height: height))
         }
+    }
+
+    private func applyContentSize(_ size: NSSize) {
+        guard let popover else { return }
+        popover.contentSize = size
+        guard let view = popover.contentViewController?.view else { return }
+        view.frame = NSRect(origin: .zero, size: size)
+        view.needsLayout = true
+    }
+}
+
+/// 弹窗内容容器：用普通 NSView 承载 SwiftUI，尺寸完全由宿主显式控制。
+///
+/// 直接把 `NSHostingController` 交给 `NSPopover` 时，其内容适配尺寸会绕过
+/// `contentSize` 上限（滚动视图内容会把弹窗撑出屏幕）；这里改用无约束的
+/// 容器视图，`contentSize` 是多少 SwiftUI 就拿到多少。
+@MainActor
+private final class PopoverContentView: NSView {
+    init(rootView: AnyView) {
+        super.init(frame: .zero)
+        let hosting = NSHostingView(rootView: rootView)
+        if #available(macOS 13.0, *) {
+            hosting.sizingOptions = []
+        }
+        hosting.autoresizingMask = [.width, .height]
+        hosting.frame = bounds
+        addSubview(hosting)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
     }
 }
 
