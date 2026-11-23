@@ -161,12 +161,14 @@ public final class MenuBarHost: NSObject {
         }
     }
 
+    /// 只设置 `contentSize`，让 NSPopover 自己摆放内容视图。
+    ///
+    /// 弹窗窗口比内容宽 26pt（左右各 13pt 的箭头留白），手动把视图 frame
+    /// 摆到 `(0, 0)` 会让内容整体左移、左侧文字与图标被裁掉。
     private func applyContentSize(_ size: NSSize) {
         guard let popover else { return }
         popover.contentSize = size
-        guard let view = popover.contentViewController?.view else { return }
-        view.frame = NSRect(origin: .zero, size: size)
-        view.needsLayout = true
+        popover.contentViewController?.view.needsLayout = true
     }
 }
 
