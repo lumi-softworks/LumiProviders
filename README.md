@@ -12,6 +12,7 @@ Shared provider contracts and default implementations used by Lumi family apps.
 - `ProviderDocsView`: plugin-contributed about and manual entries.
 - `ProviderRailView`: shared rail tab registration, filtering, and rendering.
 - `ProviderPluginControl`: plugin enablement and control contracts built on `LumiKernel`.
+- `ProviderMobileTabBar`: iOS bottom tab bar registration for plugin-contributed full-page entries.
 - `ProviderPluginManaging`: plugin listing, lifecycle management, and change observation.
 - `ProviderRootView`: platform-neutral root view regions, overlays, trailing panes, and change observation.
 - `ProviderStorage`: shared app storage and plugin enabled-state persistence.

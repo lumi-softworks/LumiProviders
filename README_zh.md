@@ -12,6 +12,7 @@ Lumi 家族各应用共享的 provider 契约与默认实现。
 - `ProviderDocsView`：插件贡献的关于页与手册条目。
 - `ProviderRailView`：共享 rail 标签页的注册、过滤与渲染。
 - `ProviderPluginControl`：构建于 `LumiKernel` 之上的插件启用与控制契约。
+- `ProviderMobileTabBar`：插件向 iOS 底部标签页注入整页入口的注册表。
 - `ProviderPluginManaging`：插件列表、生命周期管理与变更观察。
 - `ProviderRootView`：平台中立的根视图区域、覆盖层、尾部面板与变更观察。
 - `ProviderStorage`：共享的应用存储与插件启用状态持久化。
