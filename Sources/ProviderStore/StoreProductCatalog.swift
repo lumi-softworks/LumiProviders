@@ -82,9 +82,9 @@ public extension StoreProductCatalog {
     ) -> StoreEntitlementSnapshot {
         let tier = activeProductIDs
             .map { tier(for: $0) }
-            .max() ?? .none
+            .max() ?? StoreTier.none
 
-        guard tier > .none else { return .none }
+        guard tier > StoreTier.none else { return .none }
 
         return StoreEntitlementSnapshot(tier: tier, expiresAt: latestExpiration)
     }
